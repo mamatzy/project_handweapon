@@ -12,13 +12,12 @@ while True:
     
     frame = cv2.flip(frame, 1)
     
-    # Ambil resolusi kamera saat ini
     h_frame, w_frame = frame.shape[:2]
     
     w_half = w_frame // 2
     h_half = h_frame // 2
     
-    # Membagi area kiri bawah untuk WASD (Grid 3 Kolom x 2 Baris)
+    # WASD Zone
     w_step = w_half // 3
     h_step = h_half // 2
     
@@ -39,11 +38,11 @@ while True:
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
     ### KULIITT
-    lower1 = np.array([10, 25, 25], dtype=np.uint8)
+    lower1 = np.array([5, 80, 80], dtype=np.uint8)
     upper1 = np.array([40, 255, 255], dtype=np.uint8)
 
     ### BIIRUU
-    lower2 = np.array([100, 25, 25], dtype=np.uint8)
+    lower2 = np.array([100, 100, 100], dtype=np.uint8)
     upper2 = np.array([130, 255, 255], dtype=np.uint8)
 
     maskCoklat = cv2.inRange(hsv, lower1, upper1)

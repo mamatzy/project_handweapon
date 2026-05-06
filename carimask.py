@@ -24,7 +24,6 @@ while True:
 
     cv.imshow('Original & Status', frame)
     cv.imshow('Mask (Hitam Putih)', mask)
-    cv.imshow('HSV', hsv)
     # cv.imshow('Hasil (Warna Terfilter)', res)
 
     key = cv.waitKey(1) & 0xFF
