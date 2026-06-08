@@ -1,7 +1,7 @@
 # Forza Vertikal - Street Racing with Computer Vision Control
 
 
-## Identitas pria yang mengerjakan repo ini
+## Identitas 
 - **Nama**: Rahmat Maulana Ansori
 - **NRP**: 5024241011
 - **Tugas**: Merestorasi foto Lena yang rusak oleh salt&pepper, low contrast, blur, dan gaussian noise menggunakan teknik pengolahan citra manual 
@@ -17,6 +17,9 @@ Game balapan arcade interaktif yang dibuat menggunakan Pygame, di mana pergeraka
 Berikut adalah rekaman pendek mekanik gameplay dan visualisasi kontroler berbasis kamera:
 
 ![Demo Game](demo-game.mp4)
+
+https://github.com/user-attachments/assets/2ef562bb-561b-4b48-bfb1-c77fcd9b9f19
+
 
 ---
 
