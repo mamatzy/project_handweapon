@@ -4,10 +4,8 @@
 ## Identitas 
 - **Nama**: Rahmat Maulana Ansori
 - **NRP**: 5024241011
-- **Tugas**: Merestorasi foto Lena yang rusak oleh salt&pepper, low contrast, blur, dan gaussian noise menggunakan teknik pengolahan citra manual 
 
 ---
-
 
 Game balapan arcade interaktif yang dibuat menggunakan Pygame, di mana pergerakan mobil dikendalikan sepenuhnya tanpa keyboard, melainkan menggunakan masking OpenCV berbasis deteksi warna kulit/objek coklat lewat kamera.
 
