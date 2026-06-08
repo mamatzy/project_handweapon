@@ -4,9 +4,6 @@ import numpy as np
 import os
 import random
 
-# ==========================================
-# 1. INISIALISASI PYGAME & ASET
-# ==========================================
 pygame.init()
 SCREEN_WIDTH, SCREEN_HEIGHT = 800, 600
 screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
@@ -20,9 +17,6 @@ def load_image(name, scale=None, rotate=0):
     path = os.path.join(folder_asset, name)
     try:
         img = pygame.image.load(path).convert_alpha()
-        # Opsional: Jika kamu sudah menghapus bg tapi masih ada sisa warna putih solid
-        # img.set_colorkey((255, 255, 255)) 
-        
         if scale:
             img = pygame.transform.scale(img, scale)
         if rotate != 0:
@@ -33,21 +27,15 @@ def load_image(name, scale=None, rotate=0):
         surface.fill((255, 0, 0) if "car" in name else (100, 100, 100))
         return surface
 
-# Karena jalananmu aslinya vertikal, kita rotasi 90 derajat agar memanjang dari kiri ke kanan
 bg_img = load_image('jalanan.png', scale=(SCREEN_HEIGHT, SCREEN_WIDTH), rotate=90)
 bg_x1, bg_x2 = 0, SCREEN_WIDTH
 
 player_size = (180, 150)
 mobillain_size = (180, 150)
-
-# Trik Proporsi: Mobil asli menghadap ATAS. 
-# Kita scale jadi (Lebar=150, Tinggi=180) dulu, agar saat di-rotasi ukurannya pas jadi 180x150
 base_scale = (150, 180) 
 
-# Player hadap kanan (Rotasi 270)
 player_img = load_image('car1.png', scale=base_scale, rotate=270)
 
-# Kita load mobil musuh menghadap atas saja dulu sebagai "base"
 obstacle_base_imgs = [
     load_image('car2.png', scale=base_scale, rotate=180), 
     load_image('car3.png', scale=base_scale),
@@ -56,9 +44,6 @@ obstacle_base_imgs = [
     load_image('car6.png', scale=base_scale, rotate=90)
 ]
 
-# ==========================================
-# 2. INISIALISASI OPENCV & VARIABEL GAME
-# ==========================================
 cap = cv2.VideoCapture(0)
 current_state = "KOSONG"
 
@@ -71,15 +56,13 @@ font = pygame.font.SysFont(None, 36)
 running = True
 game_over = False
 
-# Sistem Jeda Spawn (Cooldown)
 spawn_timer = 0
-lane_y_positions = [0, 150, 300, 450] # Titik Y untuk 4 Jalur
+lane_y_positions = [0, 150, 300, 450]
 
-# ==========================================
-# 3. GAME LOOP
-# ==========================================
+HITBOX_OFFSET_X = -40
+HITBOX_OFFSET_Y = -60
+
 while running:
-    # --- A. EVENT PYGAME ---
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
@@ -93,7 +76,6 @@ while running:
             if event.key == pygame.K_ESCAPE:
                 running = False
 
-    # --- B. LOGIKA OPENCV & ZONA ---
     ret, frame = cap.read()
     if ret:
         frame = cv2.flip(frame, 1)
@@ -151,9 +133,7 @@ while running:
         cv2.imshow("DEBUG OPENCV (DETEKSI & MASKING)", debug_window)
         cv2.waitKey(1) 
 
-    # --- C. LOGIKA GERAK GAME ---
     if not game_over:
-        # Input Player
         if current_state == "W": player_y -= player_speed
         elif current_state == "S": player_y += player_speed
         elif current_state == "A": player_x -= player_speed
@@ -161,26 +141,22 @@ while running:
 
         player_x = max(0, min(player_x, SCREEN_WIDTH // 2 - player_size[0]))
         player_y = max(0, min(player_y, SCREEN_HEIGHT - player_size[1]))
+        
         player_rect = pygame.Rect(player_x, player_y, player_size[0], player_size[1])
+        player_hitbox = player_rect.inflate(HITBOX_OFFSET_X, HITBOX_OFFSET_Y)
 
-        # Parallax Background
         bg_speed = 8
         bg_x1 -= bg_speed
         bg_x2 -= bg_speed
         if bg_x1 <= -SCREEN_WIDTH: bg_x1 = SCREEN_WIDTH
         if bg_x2 <= -SCREEN_WIDTH: bg_x2 = SCREEN_WIDTH
 
-        # =========================================================
-        # LOGIKA SPAWN MOBIL & JARAK AMAN
-        # =========================================================
         if spawn_timer > 0:
             spawn_timer -= 1
         else:
             lane_index = random.randint(0, 3)
             obs_y = lane_y_positions[lane_index]
             
-            # CEK JARAK: Pastikan tidak ada mobil lain di ujung kanan pada jalur yang sama
-            # Semakin besar angkanya, semakin renggang jarak antar mobil
             jarak_aman_minimal = 350 
             aman_untuk_spawn = True
             
@@ -193,24 +169,20 @@ while running:
                 base_img = random.choice(obstacle_base_imgs)
                 
                 if lane_index < 2:
-                    # Jalur 0 & 1: Berlawanan Arah (Menghadap Kiri)
                     obs_img = pygame.transform.rotate(base_img, 90)
-                    obs_speed = -16 # Gerak CEPAT dari Kanan ke Kiri
+                    obs_speed = -16
                 else:
-                    # Jalur 2 & 3: Searah (Menghadap Kanan)
                     obs_img = pygame.transform.rotate(base_img, 270)
-                    obs_speed = -4  # Gerak LAMBAT dari Kanan ke Kiri
+                    obs_speed = -4
                     
                 obstacles.append({
                     'rect': pygame.Rect(SCREEN_WIDTH, obs_y, mobillain_size[0], mobillain_size[1]), 
                     'img': obs_img, 
                     'speed': obs_speed,
-                    'lane': lane_index # Simpan data jalur untuk cek jarak berikutnya
+                    'lane': lane_index
                 })
                 
-                # Reset timer agar mobil tidak keluar bersamaan terus-menerus
                 spawn_timer = random.randint(20, 40)
-        # =========================================================
 
         for obs in obstacles[:]:
             obs['rect'].x += obs['speed']
@@ -219,10 +191,11 @@ while running:
                 obstacles.remove(obs)
                 score += 10
             
-            if player_rect.colliderect(obs['rect']):
+            obs_hitbox = obs['rect'].inflate(HITBOX_OFFSET_X, HITBOX_OFFSET_Y)
+            
+            if player_hitbox.colliderect(obs_hitbox):
                 game_over = True
 
-    # --- D. RENDER GUI PYGAME ---
     screen.blit(bg_img, (bg_x1, 0))
     screen.blit(bg_img, (bg_x2, 0))
 
@@ -230,6 +203,7 @@ while running:
         screen.blit(player_img, (player_rect.x, player_rect.y))
         for obs in obstacles:
             screen.blit(obs['img'], (obs['rect'].x, obs['rect'].y))
+            
         score_text = font.render(f"Skor: {score}", True, (255, 255, 255))
         screen.blit(score_text, (20, 20))
     else:
@@ -241,9 +215,6 @@ while running:
     pygame.display.flip()
     clock.tick(60)
 
-# ==========================================
-# 4. CLEANUP
-# ==========================================
 cap.release()
 cv2.destroyAllWindows()
 pygame.quit()
