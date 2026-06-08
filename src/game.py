@@ -47,8 +47,13 @@ obstacle_base_imgs = [
 cap = cv2.VideoCapture(0)
 current_state = "KOSONG"
 
-player_x, player_y = 50, SCREEN_HEIGHT // 2
+player_x, player_y = 50.0, SCREEN_HEIGHT // 2
 player_speed = 7
+
+# Parameter Kecepatan Dunia
+base_bg_speed = 8
+extra_world_speed = 0
+target_player_x = 50
 
 obstacles = []
 score = 0
@@ -71,7 +76,7 @@ while running:
                 game_over = False
                 obstacles.clear()
                 score = 0
-                player_x, player_y = 50, SCREEN_HEIGHT // 2
+                player_x, player_y = 50.0, SCREEN_HEIGHT // 2
                 spawn_timer = 0
             if event.key == pygame.K_ESCAPE:
                 running = False
@@ -134,20 +139,30 @@ while running:
         cv2.waitKey(1) 
 
     if not game_over:
+        extra_world_speed = 0
+        target_player_x = 50
         if current_state == "W": player_y -= player_speed
+        elif current_state == "A": # REM
+            extra_world_speed = -5
+            target_player_x = 20  # Mobil tertarik ke belakang sedikit
+        elif current_state == "D": # GAS
+            extra_world_speed = 12
+            target_player_x = 150 # Mobil maju ke depan sedikit
         elif current_state == "S": player_y += player_speed
-        elif current_state == "A": player_x -= player_speed
-        elif current_state == "D": player_x += player_speed
 
-        player_x = max(0, min(player_x, SCREEN_WIDTH // 2 - player_size[0]))
+        # Efek visual mobil terdorong inersia (Interpolasi Linier)
+        player_x += (target_player_x - player_x) * 0.1
+
+        # Batasan Y agar mobil tidak keluar bahu jalan
         player_y = max(0, min(player_y, SCREEN_HEIGHT - player_size[1]))
         
-        player_rect = pygame.Rect(player_x, player_y, player_size[0], player_size[1])
+        player_rect = pygame.Rect(int(player_x), int(player_y), player_size[0], player_size[1])
         player_hitbox = player_rect.inflate(HITBOX_OFFSET_X, HITBOX_OFFSET_Y)
 
-        bg_speed = 8
-        bg_x1 -= bg_speed
-        bg_x2 -= bg_speed
+        # Kecepatan Background dinamis sesuai Gas/Rem
+        current_bg_speed = base_bg_speed + extra_world_speed
+        bg_x1 -= current_bg_speed
+        bg_x2 -= current_bg_speed
         if bg_x1 <= -SCREEN_WIDTH: bg_x1 = SCREEN_WIDTH
         if bg_x2 <= -SCREEN_WIDTH: bg_x2 = SCREEN_WIDTH
 
@@ -157,7 +172,7 @@ while running:
             lane_index = random.randint(0, 3)
             obs_y = lane_y_positions[lane_index]
             
-            jarak_aman_minimal = 350 
+            jarak_aman_minimal = 400 
             aman_untuk_spawn = True
             
             for obs in obstacles:
@@ -170,26 +185,31 @@ while running:
                 
                 if lane_index < 2:
                     obs_img = pygame.transform.rotate(base_img, 90)
-                    obs_speed = -16
+                    obs_base_speed = -14
                 else:
                     obs_img = pygame.transform.rotate(base_img, 270)
-                    obs_speed = -4
+                    obs_base_speed = -3
                     
                 obstacles.append({
                     'rect': pygame.Rect(SCREEN_WIDTH, obs_y, mobillain_size[0], mobillain_size[1]), 
                     'img': obs_img, 
-                    'speed': obs_speed,
+                    'base_speed': obs_base_speed,
                     'lane': lane_index
                 })
                 
-                spawn_timer = random.randint(20, 40)
+                spawn_timer = random.randint(15, 35)
 
         for obs in obstacles[:]:
-            obs['rect'].x += obs['speed']
+            # Net speed: Base speed musuh ditambahkan tarikan dunia (efek gas pemain)
+            actual_speed = obs['base_speed'] - extra_world_speed
+            obs['rect'].x += actual_speed
             
-            if obs['rect'].x < -mobillain_size[0]:
+            # musuh didepan or dibelakang
+            if actual_speed < 0 and obs['rect'].x < -mobillain_size[0]:
                 obstacles.remove(obs)
                 score += 10
+            elif actual_speed > 0 and obs['rect'].x > SCREEN_WIDTH:
+                obstacles.remove(obs)
             
             obs_hitbox = obs['rect'].inflate(HITBOX_OFFSET_X, HITBOX_OFFSET_Y)
             
