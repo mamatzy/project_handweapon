@@ -1,240 +1,293 @@
-import pygame
 import cv2
 import numpy as np
 import os
 import random
+import time
 
-pygame.init()
+def overlay_transparent(bg, overlay, x, y):
+    h, w = overlay.shape[:2]
+    y1, y2 = max(0, int(y)), min(bg.shape[0], int(y) + h)
+    x1, x2 = max(0, int(x)), min(bg.shape[1], int(x) + w)
+    oy1, oy2 = max(0, -int(y)), min(h, h - ((int(y) + h) - bg.shape[0]))
+    ox1, ox2 = max(0, -int(x)), min(w, w - ((int(x) + w) - bg.shape[1]))
+    
+    if y1 >= y2 or x1 >= x2:
+        return bg
+
+    bg_crop = bg[y1:y2, x1:x2]
+    overlay_crop = overlay[oy1:oy2, ox1:ox2]
+    
+    alpha = np.expand_dims(overlay_crop[:, :, 3] / 255.0, axis=2)
+    blended = (1.0 - alpha) * bg_crop + alpha * overlay_crop[:, :, :3]
+    bg[y1:y2, x1:x2] = blended.astype(np.uint8)
+    return bg
+
 SCREEN_WIDTH, SCREEN_HEIGHT = 800, 600
-screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-pygame.display.set_caption("Street Racing - CV Controller")
-clock = pygame.time.Clock()
+LOWER_SKIN = np.array([0, 40, 80])
+UPPER_SKIN = np.array([20, 255, 255])
 
 path_file = os.path.dirname(os.path.abspath(__file__))
 folder_asset = os.path.join(path_file, '..', 'assets')
 
-def load_image(name, scale=None, rotate=0):
+def load_cv_image(name, dsize=None, rotate=None):
     path = os.path.join(folder_asset, name)
-    try:
-        img = pygame.image.load(path).convert_alpha()
-        if scale:
-            img = pygame.transform.scale(img, scale)
-        if rotate != 0:
-            img = pygame.transform.rotate(img, rotate)
-        return img
-    except FileNotFoundError:
-        surface = pygame.Surface(scale if scale else (50, 30))
-        surface.fill((255, 0, 0) if "car" in name else (100, 100, 100))
-        return surface
+    img = cv2.imread(path, cv2.IMREAD_UNCHANGED)
+    if img is None:
+        img = np.zeros((100, 100, 4), dtype=np.uint8)
+        img[:,:] = (0, 0, 255, 255)
+    else:
+        if dsize: img = cv2.resize(img, dsize)
+        if rotate is not None: img = cv2.rotate(img, rotate)
+    return img
 
-bg_img = load_image('jalanan.png', scale=(SCREEN_HEIGHT, SCREEN_WIDTH), rotate=90)
-bg_x1, bg_x2 = 0, SCREEN_WIDTH
+# ========================================================
+# BLOK KONFIGURASI ASET FIX (TIDAK DIUBAH)
+# ========================================================
+bg_img = cv2.imread(os.path.join(folder_asset, 'jalanan.png'))
+if bg_img is not None:
+    bg_img = cv2.rotate(bg_img, cv2.ROTATE_90_CLOCKWISE)
+    bg_img = cv2.resize(bg_img, (SCREEN_WIDTH, SCREEN_HEIGHT))
+else:
+    bg_img = np.zeros((SCREEN_HEIGHT, SCREEN_WIDTH, 3), dtype=np.uint8)
 
-player_size = (180, 150)
-mobillain_size = (180, 150)
 base_scale = (150, 180) 
-
-player_img = load_image('car1.png', scale=base_scale, rotate=270)
+player_img = load_cv_image('car1.png', dsize=base_scale)
+player_img = cv2.rotate(player_img, cv2.ROTATE_90_CLOCKWISE)
 
 obstacle_base_imgs = [
-    load_image('car2.png', scale=base_scale, rotate=180), 
-    load_image('car3.png', scale=base_scale),
-    load_image('car4.png', scale=base_scale),
-    load_image('car5.png', scale=base_scale, rotate=180),
-    load_image('car6.png', scale=base_scale, rotate=90)
+    load_cv_image('car2.png', dsize=base_scale, rotate=cv2.ROTATE_90_COUNTERCLOCKWISE),
+    load_cv_image('car3.png', dsize=base_scale, rotate=cv2.ROTATE_90_CLOCKWISE),
+    load_cv_image('car4.png', dsize=base_scale, rotate=cv2.ROTATE_90_CLOCKWISE),
+    load_cv_image('car5.png', dsize=base_scale, rotate=cv2.ROTATE_90_COUNTERCLOCKWISE),
+    load_cv_image('car6.png', dsize=base_scale),
 ]
+# ========================================================
 
 cap = cv2.VideoCapture(0)
+
 current_state = "KOSONG"
+gesture_state = "HOVER"
+bg_x = 0
+score = 0
+obstacles = []
+spawn_timer = 0
+lane_y_positions = [20, 160, 310, 450]
+game_over = False
 
 player_x, player_y = 50.0, SCREEN_HEIGHT // 2
 player_speed = 7
-
-# Parameter Kecepatan Dunia
 base_bg_speed = 8
 extra_world_speed = 0
 target_player_x = 50
+HITBOX_W, HITBOX_H = 160, 120
 
-obstacles = []
-score = 0
-font = pygame.font.SysFont(None, 36)
-running = True
-game_over = False
+kernel = np.ones((5, 5), np.uint8)
 
-spawn_timer = 0
-lane_y_positions = [0, 150, 300, 450]
+boost_end_time = 0
+cooldown_end_time = 0
+is_boosting = False
 
-HITBOX_OFFSET_X = -40
-HITBOX_OFFSET_Y = -60
-
-while running:
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
-            running = False
-        if event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_r and game_over:
-                game_over = False
-                obstacles.clear()
-                score = 0
-                player_x, player_y = 50.0, SCREEN_HEIGHT // 2
-                spawn_timer = 0
-            if event.key == pygame.K_ESCAPE:
-                running = False
-
+while True:
     ret, frame = cap.read()
-    if ret:
-        frame = cv2.flip(frame, 1)
-        h_frame, w_frame = frame.shape[:2]
-        w_half, h_half = w_frame // 2, h_frame // 2
-        w_step, h_step = w_half // 3, h_half // 2
-        
-        zones = {
-            "W": (w_step, h_half, w_step * 2, h_half + h_step),
-            "A": (0, h_half + h_step, w_step, h_frame),
-            "S": (w_step, h_half + h_step, w_step * 2, h_frame),
-            "D": (w_step * 2, h_half + h_step, w_half, h_frame),
-            "MOUSE": (w_half, h_half, w_frame, h_frame)
-        }
+    if not ret: break
+    
+    frame = cv2.flip(frame, 1)
+    h_frame, w_frame = frame.shape[:2]
+    w_half, h_half = w_frame // 2, h_frame // 2
+    w_step, h_step = w_half // 3, h_half // 2
+    
+    zones = {
+        "W": (w_step, h_half, w_step * 2, h_half + h_step),
+        "A": (0, h_half + h_step, w_step, h_frame),
+        "S": (w_step, h_half + h_step, w_step * 2, h_frame),
+        "D": (w_step * 2, h_half + h_step, w_half, h_frame),
+        "MOUSE": (w_half, h_half, w_frame, h_frame)
+    }
 
-        for name, (x1, y1, x2, y2) in zones.items():
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
-            cv2.putText(frame, name, (x1 + 10, y1 + 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 0), 2)
+    for name, (x1, y1, x2, y2) in zones.items():
+        cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
+        cv2.putText(frame, name, (x1 + 10, y1 + 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 0), 2)
 
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        lower1 = np.array([5, 80, 80], dtype=np.uint8)
-        upper1 = np.array([40, 255, 255], dtype=np.uint8)
-        maskCoklat = cv2.inRange(hsv, lower1, upper1)
-
-        contours, _ = cv2.findContours(maskCoklat, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-        detected_zone = "KOSONG"
-
-        if contours:
-            max_contour = max(contours, key=cv2.contourArea)
-            if cv2.contourArea(max_contour) > 1000:
-                x, y, w, h = cv2.boundingRect(max_contour)
-                cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 0, 255), 2)
-                M = cv2.moments(max_contour)
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, LOWER_SKIN, UPPER_SKIN)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    detected_zone = "KOSONG"
+    gesture_state = "HOVER"
+    
+    if contours:
+        max_contour = max(contours, key=cv2.contourArea)
+        if cv2.contourArea(max_contour) > 3000:
+            M = cv2.moments(max_contour)
+            if M["m00"] != 0:
+                cx = int(M["m10"] / M["m00"])
+                cy = int(M["m01"] / M["m00"])
                 
-                if M["m00"] != 0:
-                    cx = int(M["m10"] / M["m00"])
-                    cy = int(M["m01"] / M["m00"])
-                    cv2.circle(frame, (cx, cy), 5, (0, 0, 255), -1)
-                    
-                    for name, (x1, y1, x2, y2) in zones.items():
-                        if x1 <= cx <= x2 and y1 <= cy <= y2:
-                            detected_zone = name
-                            break
+                for name, (zx1, zy1, zx2, zy2) in zones.items():
+                    if zx1 <= cx <= zx2 and zy1 <= cy <= zy2:
+                        detected_zone = name
+                        break
+                        
+                cv2.circle(frame, (cx, cy), 5, (0, 0, 255), -1)
 
-        if detected_zone != current_state:
-            current_state = detected_zone
+            hull = cv2.convexHull(max_contour, returnPoints=False)
+            if hull is not None and len(hull) > 3 and len(max_contour) > 3:
+                try:
+                    defects = cv2.convexityDefects(max_contour, hull)
+                    finger_count = 0
+                    if defects is not None:
+                        for i in range(defects.shape[0]):
+                            s, e, f, d = defects[i, 0]
+                            if d > 12000:
+                                finger_count += 1
+                                
+                    if finger_count <= 1:
+                        gesture_state = "ATTACK"
+                except: pass
 
-        cv2.putText(frame, f"STATUS: {current_state}", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 3)
+            cv2.drawContours(frame, [max_contour], -1, (0, 255, 0), 2)
 
-        mask_bgr = cv2.cvtColor(maskCoklat, cv2.COLOR_GRAY2BGR)
-        frame_kecil = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)
-        mask_kecil = cv2.resize(mask_bgr, (0, 0), fx=0.5, fy=0.5)
-        debug_window = np.hstack((frame_kecil, mask_kecil))
+    if detected_zone != current_state:
+        current_state = detected_zone
+
+    current_time = time.time()
+    
+    # Logika Boost yang Anti-Flicker
+    if gesture_state == "ATTACK" and current_time > cooldown_end_time and not is_boosting:
+        is_boosting = True
+        boost_end_time = current_time + 3.0
+
+    if is_boosting and current_time > boost_end_time:
+        is_boosting = False
+        cooldown_end_time = current_time + 5.0
         
-        cv2.imshow("DEBUG OPENCV (DETEKSI & MASKING)", debug_window)
-        cv2.waitKey(1) 
+    is_cooldown = (not is_boosting) and (current_time < cooldown_end_time)
 
+    cv2.putText(frame, f"ZONE: {current_state} | GESTURE: {gesture_state}", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+
+    canvas = np.zeros((SCREEN_HEIGHT, SCREEN_WIDTH, 3), dtype=np.uint8)
+    
     if not game_over:
         extra_world_speed = 0
         target_player_x = 50
-        if current_state == "W": player_y -= player_speed
-        elif current_state == "A": # REM
-            extra_world_speed = -5
-            target_player_x = 20  # Mobil tertarik ke belakang sedikit
-        elif current_state == "D": # GAS
+
+        # Konfigurasi WASD Sesuai Permintaan
+        if current_state == "D":
             extra_world_speed = 12
-            target_player_x = 150 # Mobil maju ke depan sedikit
-        elif current_state == "S": player_y += player_speed
+            target_player_x = 150
+        elif current_state == "A":
+            extra_world_speed = -5
+            target_player_x = 20
+        elif current_state == "W":
+            player_y -= player_speed
+        elif current_state == "S":
+            player_y += player_speed
 
-        # Efek visual mobil terdorong inersia (Interpolasi Linier)
         player_x += (target_player_x - player_x) * 0.1
-
-        # Batasan Y agar mobil tidak keluar bahu jalan
-        player_y = max(0, min(player_y, SCREEN_HEIGHT - player_size[1]))
+        player_y = max(0, min(player_y, SCREEN_HEIGHT - 150))
         
-        player_rect = pygame.Rect(int(player_x), int(player_y), player_size[0], player_size[1])
-        player_hitbox = player_rect.inflate(HITBOX_OFFSET_X, HITBOX_OFFSET_Y)
-
-        # Kecepatan Background dinamis sesuai Gas/Rem
         current_bg_speed = base_bg_speed + extra_world_speed
-        bg_x1 -= current_bg_speed
-        bg_x2 -= current_bg_speed
-        if bg_x1 <= -SCREEN_WIDTH: bg_x1 = SCREEN_WIDTH
-        if bg_x2 <= -SCREEN_WIDTH: bg_x2 = SCREEN_WIDTH
+        bg_x = (bg_x + current_bg_speed) % SCREEN_WIDTH
+    
+    canvas[:, :SCREEN_WIDTH-int(bg_x)] = bg_img[:, int(bg_x):]
+    canvas[:, SCREEN_WIDTH-int(bg_x):] = bg_img[:, :int(bg_x)]
 
+    if not game_over:
         if spawn_timer > 0:
             spawn_timer -= 1
         else:
-            lane_index = random.randint(0, 3)
-            obs_y = lane_y_positions[lane_index]
+            lane_idx = random.randint(0, 3)
+            lane_y = lane_y_positions[lane_idx]
             
-            jarak_aman_minimal = 400 
-            aman_untuk_spawn = True
-            
+            safe = True
             for obs in obstacles:
-                if obs['lane'] == lane_index and obs['rect'].x > (SCREEN_WIDTH - jarak_aman_minimal):
-                    aman_untuk_spawn = False
+                if obs['lane'] == lane_idx and obs['x'] > SCREEN_WIDTH - 350:
+                    safe = False
                     break
             
-            if aman_untuk_spawn:
+            if safe:
                 base_img = random.choice(obstacle_base_imgs)
-                
-                if lane_index < 2:
-                    obs_img = pygame.transform.rotate(base_img, 90)
-                    obs_base_speed = -14
+                if lane_idx < 2:
+                    # Lane Berlawanan: Balik arah (Flip 180 Derajat) dan laju cepat
+                    obs_img = cv2.rotate(base_img, cv2.ROTATE_180)
+                    obs_base_speed = random.randint(14, 20)
                 else:
-                    obs_img = pygame.transform.rotate(base_img, 270)
-                    obs_base_speed = -3
+                    # Lane Searah: Tanpa rotasi dan laju pelan
+                    obs_img = base_img
+                    obs_base_speed = random.randint(3, 7)
                     
                 obstacles.append({
-                    'rect': pygame.Rect(SCREEN_WIDTH, obs_y, mobillain_size[0], mobillain_size[1]), 
-                    'img': obs_img, 
-                    'base_speed': obs_base_speed,
-                    'lane': lane_index
+                    'x': SCREEN_WIDTH, 'y': lane_y, 
+                    'img': obs_img, 'base_speed': obs_base_speed,
+                    'lane': lane_idx
                 })
-                
-                spawn_timer = random.randint(15, 35)
+                spawn_timer = random.randint(20, 40)
+
+        player_box = [player_x + 20, player_y + 30, player_x + HITBOX_W, player_y + HITBOX_H]
 
         for obs in obstacles[:]:
-            # Net speed: Base speed musuh ditambahkan tarikan dunia (efek gas pemain)
-            actual_speed = obs['base_speed'] - extra_world_speed
-            obs['rect'].x += actual_speed
+            actual_speed = obs['base_speed'] + extra_world_speed
+            obs['x'] -= actual_speed
             
-            # musuh didepan or dibelakang
-            if actual_speed < 0 and obs['rect'].x < -mobillain_size[0]:
+            if obs['x'] < -200 or obs['x'] > SCREEN_WIDTH + 200:
                 obstacles.remove(obs)
-                score += 10
-            elif actual_speed > 0 and obs['rect'].x > SCREEN_WIDTH:
-                obstacles.remove(obs)
+                if obs['x'] < -200:
+                    score += 5
+                continue
+                
+            obs_box = [obs['x'] + 20, obs['y'] + 30, obs['x'] + HITBOX_W, obs['y'] + HITBOX_H]
             
-            obs_hitbox = obs['rect'].inflate(HITBOX_OFFSET_X, HITBOX_OFFSET_Y)
+            collide = (player_box[0] < obs_box[2] and player_box[2] > obs_box[0] and
+                       player_box[1] < obs_box[3] and player_box[3] > obs_box[1])
             
-            if player_hitbox.colliderect(obs_hitbox):
-                game_over = True
+            if collide:
+                if is_boosting:
+                    obstacles.remove(obs)
+                    score += 20
+                else:
+                    game_over = True
 
-    screen.blit(bg_img, (bg_x1, 0))
-    screen.blit(bg_img, (bg_x2, 0))
+    for obs in obstacles:
+        canvas = overlay_transparent(canvas, obs['img'], obs['x'], obs['y'])
 
     if not game_over:
-        screen.blit(player_img, (player_rect.x, player_rect.y))
-        for obs in obstacles:
-            screen.blit(obs['img'], (obs['rect'].x, obs['rect'].y))
+        canvas = overlay_transparent(canvas, player_img, player_x, player_y)
+        
+        cv2.putText(canvas, f"GESTURE: {gesture_state}", (SCREEN_WIDTH - 250, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0) if gesture_state == "HOVER" else (0, 0, 255), 2)
+        
+        if is_boosting:
+            rem = max(0.0, round(boost_end_time - current_time, 1))
+            cv2.putText(canvas, f"BOOST! {rem}s", (int(player_x), int(player_y)-10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 165, 255), 3)
+        elif is_cooldown:
+            rem = max(0.0, round(cooldown_end_time - current_time, 1))
+            cv2.putText(canvas, f"COOLDOWN! {rem}s", (int(player_x), int(player_y)-10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
             
-        score_text = font.render(f"Skor: {score}", True, (255, 255, 255))
-        screen.blit(score_text, (20, 20))
     else:
-        go_text = font.render(f"GAME OVER! Skor: {score}", True, (255, 50, 50))
-        retry_text = font.render("Tekan 'R' untuk ulang, 'ESC' untuk keluar", True, (255, 255, 255))
-        screen.blit(go_text, (SCREEN_WIDTH//2 - go_text.get_width()//2, SCREEN_HEIGHT//2 - 30))
-        screen.blit(retry_text, (SCREEN_WIDTH//2 - retry_text.get_width()//2, SCREEN_HEIGHT//2 + 10))
+        cv2.putText(canvas, "CRASHED! TEKAN 'R' UNTUK RESTART", (100, SCREEN_HEIGHT//2), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 3)
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('r'):
+            game_over = False
+            obstacles.clear()
+            score = 0
+            is_boosting = False
+            boost_end_time = 0
+            cooldown_end_time = 0
 
-    pygame.display.flip()
-    clock.tick(60)
+    cv2.putText(canvas, f"SCORE: {score}", (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 3)
+
+    mask_bgr = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
+    frame_kecil = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)
+    mask_kecil = cv2.resize(mask_bgr, (0, 0), fx=0.5, fy=0.5)
+    debug_window = np.hstack((frame_kecil, mask_kecil))
+    
+    cv2.imshow("Debug View (Camera & Mask)", debug_window)
+    cv2.imshow("Main Game (Pure OpenCV)", canvas)
+
+    if cv2.waitKey(1) & 0xFF == ord('z'):
+        break
 
 cap.release()
 cv2.destroyAllWindows()
-pygame.quit()
