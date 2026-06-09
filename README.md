@@ -16,10 +16,12 @@ Berikut adalah rekaman mekanik gameplay sebelum dan sesudah penambahan sistem pe
 
 ### Versi 1: Kontrol Dasar (Tanpa Hand Recognition)
 Kontrol pergerakan mobil murni menggunakan posisi koordinat tangan di dalam zona WASD.
+
 https://github.com/user-attachments/assets/2ef562bb-561b-4b48-bfb1-c77fcd9b9f19
 
 ### Versi 2: Kontrol Lanjut (Dengan Hand Recognition & Boost)
 Penambahan fitur deteksi kepalan tangan untuk memicu mode menyerang/boost.
+
 https://github.com/user-attachments/assets/e3edd2f6-a58e-4ade-b0f0-29aa54955c26
 
 ---
