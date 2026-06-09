@@ -4,7 +4,75 @@ import os
 import random
 import time
 
+
+def manual_resize(img, dsize):
+    w, h = dsize
+    row_idx = np.floor(np.arange(h) * (img.shape[0] / h)).astype(int)
+    col_idx = np.floor(np.arange(w) * (img.shape[1] / w)).astype(int)
+    return img[row_idx[:, None], col_idx]
+
+def manual_rotate(img, code):
+    if code == cv2.ROTATE_90_CLOCKWISE:
+        return np.rot90(img, k=-1, axes=(0, 1))
+    elif code == cv2.ROTATE_90_COUNTERCLOCKWISE:
+        return np.rot90(img, k=1, axes=(0, 1))
+    elif code == cv2.ROTATE_180:
+        return np.rot90(img, k=2, axes=(0, 1))
+    return img
+
+def manual_bgr2hsv(bgr_img):
+    bgr = bgr_img.astype(np.float32) / 255.0
+    b, g, r = bgr[:,:,0], bgr[:,:,1], bgr[:,:,2]
+    
+    cmax = np.max(bgr, axis=2)
+    cmin = np.min(bgr, axis=2)
+    diff = cmax - cmin
+    
+    h = np.zeros_like(cmax)
+    s = np.zeros_like(cmax)
+    v = cmax
+    
+    mask_cmax = cmax > 0
+    s[mask_cmax] = diff[mask_cmax] / cmax[mask_cmax]
+    
+    mask_r = (cmax == r) & (diff > 0)
+    mask_g = (cmax == g) & (diff > 0)
+    mask_b = (cmax == b) & (diff > 0)
+    
+    h[mask_r] = (60 * ((g[mask_r] - b[mask_r]) / diff[mask_r]) + 360) % 360
+    h[mask_g] = (60 * ((b[mask_g] - r[mask_g]) / diff[mask_g]) + 120) % 360
+    h[mask_b] = (60 * ((r[mask_b] - g[mask_b]) / diff[mask_b]) + 240) % 360
+    
+    return np.stack((h / 2, s * 255, v * 255), axis=2).astype(np.uint8)
+
+def manual_hsv_mask(hsv_img, lower, upper):
+    mask = (
+        (hsv_img[:, :, 0] >= lower[0]) & (hsv_img[:, :, 0] <= upper[0]) &
+        (hsv_img[:, :, 1] >= lower[1]) & (hsv_img[:, :, 1] <= upper[1]) &
+        (hsv_img[:, :, 2] >= lower[2]) & (hsv_img[:, :, 2] <= upper[2])
+    )
+    return (mask * 255).astype(np.uint8)
+
+def manual_dilate(bin_img):
+    """ Dilasi manual dengan matriks pergeseran sel (Slicing) """
+    out = bin_img.copy()
+    out[:-1, :] |= bin_img[1:, :]
+    out[1:, :] |= bin_img[:-1, :]
+    out[:, :-1] |= bin_img[:, 1:]
+    out[:, 1:] |= bin_img[:, :-1]
+    return out
+
+def manual_erode(bin_img):
+    """ Erosi manual dengan matriks pergeseran sel (Slicing) """
+    out = bin_img.copy()
+    out[:-1, :] &= bin_img[1:, :]
+    out[1:, :] &= bin_img[:-1, :]
+    out[:, :-1] &= bin_img[:, 1:]
+    out[:, 1:] &= bin_img[:, :-1]
+    return out
+
 def overlay_transparent(bg, overlay, x, y):
+    """ Alpha Blending RGBA murni matematika NumPy """
     h, w = overlay.shape[:2]
     y1, y2 = max(0, int(y)), min(bg.shape[0], int(y) + h)
     x1, x2 = max(0, int(x)), min(bg.shape[1], int(x) + w)
@@ -36,8 +104,8 @@ def load_cv_image(name, dsize=None, rotate=None):
         img = np.zeros((100, 100, 4), dtype=np.uint8)
         img[:,:] = (0, 0, 255, 255)
     else:
-        if dsize: img = cv2.resize(img, dsize)
-        if rotate is not None: img = cv2.rotate(img, rotate)
+        if dsize: img = manual_resize(img, dsize)
+        if rotate is not None: img = manual_rotate(img, rotate)
     return img
 
 # ========================================================
@@ -45,14 +113,14 @@ def load_cv_image(name, dsize=None, rotate=None):
 # ========================================================
 bg_img = cv2.imread(os.path.join(folder_asset, 'jalanan.png'))
 if bg_img is not None:
-    bg_img = cv2.rotate(bg_img, cv2.ROTATE_90_CLOCKWISE)
-    bg_img = cv2.resize(bg_img, (SCREEN_WIDTH, SCREEN_HEIGHT))
+    bg_img = manual_rotate(bg_img, cv2.ROTATE_90_CLOCKWISE)
+    bg_img = manual_resize(bg_img, (SCREEN_WIDTH, SCREEN_HEIGHT))
 else:
     bg_img = np.zeros((SCREEN_HEIGHT, SCREEN_WIDTH, 3), dtype=np.uint8)
 
 base_scale = (150, 180) 
 player_img = load_cv_image('car1.png', dsize=base_scale)
-player_img = cv2.rotate(player_img, cv2.ROTATE_90_CLOCKWISE)
+player_img = manual_rotate(player_img, cv2.ROTATE_90_CLOCKWISE)
 
 obstacle_base_imgs = [
     load_cv_image('car2.png', dsize=base_scale, rotate=cv2.ROTATE_90_COUNTERCLOCKWISE),
@@ -81,8 +149,6 @@ extra_world_speed = 0
 target_player_x = 50
 HITBOX_W, HITBOX_H = 160, 120
 
-kernel = np.ones((5, 5), np.uint8)
-
 boost_end_time = 0
 cooldown_end_time = 0
 is_boosting = False
@@ -91,7 +157,8 @@ while True:
     ret, frame = cap.read()
     if not ret: break
     
-    frame = cv2.flip(frame, 1)
+    frame = np.ascontiguousarray(frame[:, ::-1, :])
+    
     h_frame, w_frame = frame.shape[:2]
     w_half, h_half = w_frame // 2, h_frame // 2
     w_step, h_step = w_half // 3, h_half // 2
@@ -108,10 +175,10 @@ while True:
         cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
         cv2.putText(frame, name, (x1 + 10, y1 + 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 0), 2)
 
-    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-    mask = cv2.inRange(hsv, LOWER_SKIN, UPPER_SKIN)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    hsv = manual_bgr2hsv(frame)
+    mask = manual_hsv_mask(hsv, LOWER_SKIN, UPPER_SKIN)
+    mask = manual_dilate(manual_erode(mask))
+    mask = manual_erode(manual_dilate(mask))
     
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
@@ -155,7 +222,6 @@ while True:
 
     current_time = time.time()
     
-    # Logika Boost yang Anti-Flicker
     if gesture_state == "ATTACK" and current_time > cooldown_end_time and not is_boosting:
         is_boosting = True
         boost_end_time = current_time + 3.0
@@ -174,7 +240,6 @@ while True:
         extra_world_speed = 0
         target_player_x = 50
 
-        # Konfigurasi WASD Sesuai Permintaan
         if current_state == "D":
             extra_world_speed = 12
             target_player_x = 150
@@ -211,11 +276,9 @@ while True:
             if safe:
                 base_img = random.choice(obstacle_base_imgs)
                 if lane_idx < 2:
-                    # Lane Berlawanan: Balik arah (Flip 180 Derajat) dan laju cepat
-                    obs_img = cv2.rotate(base_img, cv2.ROTATE_180)
+                    obs_img = manual_rotate(base_img, cv2.ROTATE_180)
                     obs_base_speed = random.randint(14, 20)
                 else:
-                    # Lane Searah: Tanpa rotasi dan laju pelan
                     obs_img = base_img
                     obs_base_speed = random.randint(3, 7)
                     
@@ -278,13 +341,13 @@ while True:
 
     cv2.putText(canvas, f"SCORE: {score}", (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 3)
 
-    mask_bgr = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
-    frame_kecil = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)
-    mask_kecil = cv2.resize(mask_bgr, (0, 0), fx=0.5, fy=0.5)
+    mask_bgr = np.stack((mask,) * 3, axis=-1) # Konversi Gray ke BGR murni NumPy
+    frame_kecil = frame[::2, ::2, :]
+    mask_kecil = mask_bgr[::2, ::2, :]
     debug_window = np.hstack((frame_kecil, mask_kecil))
     
     cv2.imshow("Debug View (Camera & Mask)", debug_window)
-    cv2.imshow("Main Game (Pure OpenCV)", canvas)
+    cv2.imshow("Main Game (Pure Python & Numpy)", canvas)
 
     if cv2.waitKey(1) & 0xFF == ord('z'):
         break
